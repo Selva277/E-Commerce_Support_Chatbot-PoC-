@@ -5,8 +5,7 @@ A complete **Retrieval-Augmented Generation (RAG)** powered customer support cha
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![Flask](https://img.shields.io/badge/Flask-3.0.0-green.svg)
 ![MySQL](https://img.shields.io/badge/MySQL-8.0+-orange.svg)
-![Gemini](https://img.shields.io/badge/Gemini-AI-purple.svg)
-![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Gemini](https://img.shields.io/badge/Gemini-2.5_Flash-purple.svg)
 
 ## 📋 Table of Contents
 
@@ -24,26 +23,28 @@ A complete **Retrieval-Augmented Generation (RAG)** powered customer support cha
 
 ### 🧠 RAG Pipeline
 - **Database Retrieval**: Real-time queries from MySQL for orders, users, and tickets
-- **Knowledge Base**: FAQ retrieval for common questions
-- **AI Generation**: Google Gemini AI for natural language responses
+- **Knowledge Base**: FAQ retrieval for common questions (with Indian Rupee pricing)
+- **AI Generation**: Google Gemini 2.5 Flash for natural language responses
 - **Smart Escalation**: Graceful fallback to human support when needed
 
 ### 💬 Conversational AI
-- Natural language understanding with intent detection
-- Context-aware responses across multiple turns
-- Order number extraction and validation
+- Natural language understanding with context-aware intent detection
+- Multi-turn conversation support with state management
+- Automatic order number extraction and validation
+- Standalone order number handling
 - Multi-source response generation
 
 ### 🗄️ Database Integration
-- Real-time order tracking
+- Real-time order tracking with status updates
 - Customer information lookup
-- Support ticket creation
+- Automated support ticket creation
 - Conversation history logging
+- Order status-based response formatting
 
 ### 🎨 Modern UI
 - Clean, gradient-based design
 - Real-time typing indicators
-- Response source badges (Database/KB/AI)
+- Response source badges (Database/KB/AI/Escalation)
 - Quick action buttons
 - Fully responsive layout
 
@@ -64,11 +65,12 @@ A complete **Retrieval-Augmented Generation (RAG)** powered customer support cha
 │  ┌─────────────────────────────────┐   │
 │  │      RAG Pipeline               │   │
 │  ├─────────────────────────────────┤   │
-│  │  1. Intent Detection            │   │
-│  │  2. Database Retrieval          │───┼──→ MySQL
-│  │  3. Knowledge Base Search       │   │
-│  │  4. Gemini AI Generation        │───┼──→ Gemini API
-│  │  5. Response Synthesis          │   │
+│  │  1. Context-Aware State Check   │   │
+│  │  2. Intent Detection            │   │
+│  │  3. Database Retrieval          │───┼──→ MySQL
+│  │  4. Knowledge Base Search       │   │
+│  │  5. Gemini AI Generation        │───┼──→ Gemini 2.5 Flash API
+│  │  6. Response Synthesis          │   │
 │  └─────────────────────────────────┘   │
 │                                         │
 └─────────────────────────────────────────┘
@@ -88,8 +90,28 @@ A complete **Retrieval-Augmented Generation (RAG)** powered customer support cha
 **Order Tracking:**
 ```
 User: Where is my order 12345?
-Bot: Your order #12345 containing "Running Shoes - Nike Air Max" 
-     is currently shipped. It should arrive within 3 days.
+Bot: Your order #12345 (Running Shoes - Nike Air Max) is on its way 
+     and should arrive within 3 days. Tracking number: TRK123456789
+     🗄️ From Database
+```
+
+**Standalone Order Number:**
+```
+User: 12345
+Bot: Your order #12345 (Running Shoes - Nike Air Max) is on its way 
+     and should arrive within 3 days.
+     🗄️ From Database
+```
+
+**Context-Aware Return Flow:**
+```
+User: I want to return an item
+Bot: I can help you with a return! Please provide your 5-digit order number.
+
+User: 12347
+Bot: I found your order #12347 (Laptop - Dell XPS 13). You can return it 
+     within 30 days. Visit our Returns page: https://ecommerce.com/returns. 
+     Need help with the process?
      🗄️ From Database
 ```
 
@@ -102,13 +124,22 @@ Bot: You can return items within 30 days of delivery. Items must
      📚 Knowledge Base
 ```
 
-**Escalation:**
+**Cancellation Flow:**
 ```
-User: Can I change my shipping address?
-Bot: I understand you want to change your shipping address. I cannot 
-     modify addresses directly, but I can create a support ticket for 
-     our team to help you immediately. Would you like me to do that?
+User: Cancel order 12346
+Bot: I've created a cancellation request for order #12346 (T-Shirt - 
+     Adidas Classic). Our team will process it within 24 hours. Your 
+     ticket number is #4.
      ⚠️ Escalation
+```
+
+**Address Change:**
+```
+User: Change address for 12345
+Bot: Order #12345 (Running Shoes - Nike Air Max) has already shipped. 
+     The address cannot be changed now. You may need to contact the 
+     carrier or wait for delivery.
+     🗄️ From Database
 ```
 
 ## 📦 Prerequisites
@@ -172,35 +203,58 @@ mv index.html templates/
 
 ## ⚙️ Configuration
 
-### 1. Configure Database
+### 1. Configure Environment Variables
 
-Edit `app.py` (lines 18-23):
+Create a `.env` file in the root directory:
+
+```env
+# Database Configuration
+DB_HOST=localhost
+DB_USER=root
+DB_PASSWORD=your_mysql_password
+DB_NAME=ecommerce_support
+
+# Google Gemini API Key
+GEMINI_API_KEY=your_gemini_api_key_here
+```
+
+**Important:** Never commit `.env` file to version control. Use `.env.example` as a template.
+
+### 2. Configure Database (Alternative)
+
+If not using `.env`, edit `app.py` (lines 26-31):
 
 ```python
 DB_CONFIG = {
-    'host': 'localhost',
-    'user': 'root',
-    'password': 'your_mysql_password',  # ← Change this
-    'database': 'ecommerce_support'
+    'host': os.getenv('DB_HOST', 'localhost'),
+    'user': os.getenv('DB_USER', 'root'),
+    'password': os.getenv('DB_PASSWORD'),  # ← Change this
+    'database': os.getenv('DB_NAME', 'ecommerce_support')
 }
 ```
 
-### 2. Configure Gemini API
+### 3. Configure Gemini API
 
-Edit `app.py` (line 14):
+The API is configured via environment variables. Add your key to `.env`:
 
-```python
-genai.configure(api_key='YOUR_GEMINI_API_KEY')  # ← Add your API key
+```env
+GEMINI_API_KEY=AIzaSy...your_actual_key
 ```
 
 Get your API key from: [Google AI Studio](https://makersuite.google.com/app/apikey)
 
-### 3. Verify Setup
+**Note:** The app uses `gemini-2.5-flash` model for faster and more efficient responses.
+
+### 4. Verify Setup
 
 Run the setup checker:
 
 ```bash
+# Detailed check
 python check_setup.py
+
+# Quick check (Windows only)
+check_setup.bat
 ```
 
 This will verify all configurations and dependencies.
@@ -225,10 +279,25 @@ Navigate to: **http://localhost:5000**
 
 ### Try Sample Queries
 
-1. **Track Order**: "Where is my order 12345?"
-2. **Returns**: "How do I return an item?"
+1. **Track Order**: "Where is my order 12345?" or just "12345"
+2. **Returns**: "How do I return an item?" or "Return order 12347"
 3. **Shipping**: "What are the shipping options?"
 4. **Payments**: "What payment methods do you accept?"
+5. **Cancel**: "Cancel order 12346"
+6. **Address Change**: "Change address for order 12349"
+
+### Sample Test Orders
+
+The database comes pre-populated with these test orders:
+
+| Order ID | Status | Items | Notes |
+|----------|--------|-------|-------|
+| 12345 | shipped | Running Shoes - Nike Air Max | Has tracking number |
+| 12346 | processing | T-Shirt - Adidas Classic | Can be cancelled |
+| 12347 | delivered | Laptop - Dell XPS 13 | Can be returned |
+| 12348 | shipped | Wireless Mouse - Logitech MX | In transit |
+| 12349 | processing | Headphones - Sony WH-1000XM4 | Can modify address |
+| 12350 | cancelled | Smart Watch - Apple Watch | Already cancelled |
 
 ## 📁 Project Structure
 
@@ -240,8 +309,10 @@ ecommerce-chatbot/
 ├── requirements.txt            # Python dependencies
 ├── check_setup.py             # Setup verification script
 ├── check_setup.bat            # Windows quick checker
-├── README.md                  # This file
+├── .env                       # Environment variables (create this)
+├── .env.example               # Environment variables template
 ├── .gitignore                 # Git ignore file
+├── README.md                  # This file
 ├── LICENSE                    # MIT License
 │
 └── templates/
@@ -252,7 +323,7 @@ ecommerce-chatbot/
 
 ### POST `/api/chat`
 
-Send a message to the chatbot.
+Send a message to the chatbot with conversation context.
 
 **Request:**
 ```json
@@ -265,7 +336,7 @@ Send a message to the chatbot.
 **Response:**
 ```json
 {
-  "message": "Your order #12345 is shipped and will arrive in 3 days.",
+  "message": "Your order #12345 (Running Shoes - Nike Air Max) is on its way and should arrive within 3 days. Tracking number: TRK123456789",
   "type": "database_response",
   "needs_escalation": false,
   "context": {},
@@ -273,7 +344,8 @@ Send a message to the chatbot.
     "order_id": "12345",
     "status": "shipped",
     "items": "Running Shoes - Nike Air Max",
-    "estimated_delivery": "3 days"
+    "estimated_delivery": "3 days",
+    "tracking_number": "TRK123456789"
   }
 }
 ```
@@ -282,19 +354,50 @@ Send a message to the chatbot.
 - `database_response` - Retrieved from MySQL database
 - `knowledge_base_response` - Retrieved from knowledge base
 - `generated_response` - Generated by Gemini AI
-- `escalation` - Needs human support
-- `clarification` - Needs more information
+- `escalation` - Needs human support (ticket creation offered)
+- `escalation_confirmed` - Ticket created successfully
+- `clarification` - Needs more information from user
 - `error` - Error occurred
+
+**Context Management:**
+
+The chatbot maintains conversation state through context flags:
+
+```json
+{
+  "context": {
+    "awaiting_order_number": true,
+    "awaiting_return_order_number": true,
+    "awaiting_order_for_cancel": true,
+    "awaiting_order_for_address": true,
+    "awaiting_cancel_confirmation": true,
+    "awaiting_address_change_confirmation": true,
+    "pending_order_number": "12345"
+  }
+}
+```
+
+**Intent Detection:**
+
+The system detects these intents:
+- `track_order` - Order status inquiry
+- `return_item` / `return_item_with_order` - Return requests
+- `cancel_order` / `cancel_order_with_number` - Cancellation requests
+- `change_address` / `change_address_with_number` - Address updates
+- `shipping_info` - Shipping options query
+- `payment_info` - Payment methods query
+- `contact_support` - Customer support contact
+- `general` - General queries handled by Gemini AI
 
 ### POST `/api/create_ticket`
 
-Create a support ticket.
+Create a support ticket for escalation.
 
 **Request:**
 ```json
 {
   "user_id": 1,
-  "issue": "Need to change shipping address"
+  "issue": "Need to change shipping address for order #12349"
 }
 ```
 
@@ -304,6 +407,14 @@ Create a support ticket.
   "success": true,
   "ticket_id": 4,
   "message": "Support ticket #4 has been created. Our team will contact you within 24 hours."
+}
+```
+
+**Error Response:**
+```json
+{
+  "success": false,
+  "message": "Failed to create ticket. Please try again."
 }
 ```
 
@@ -322,6 +433,8 @@ python check_setup.py
 mysql -u root -p
 USE ecommerce_support;
 SELECT * FROM orders;
+SELECT * FROM users;
+SELECT * FROM tickets;
 ```
 
 2. **API Endpoints:**
@@ -330,19 +443,38 @@ SELECT * FROM orders;
 curl -X POST http://localhost:5000/api/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "Where is my order 12345?", "context": {}}'
+
+# Test ticket creation
+curl -X POST http://localhost:5000/api/create_ticket \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": 1, "issue": "Test ticket"}'
 ```
 
-### Test Queries
+### Test Scenarios
 
-| Query | Expected Response Type |
-|-------|----------------------|
-| "Where is my order 12345?" | Database retrieval |
-| "How do I return an item?" | Knowledge base |
-| "What payment methods?" | Knowledge base |
-| "Change my address" | Escalation |
-| Random text | AI generation |
+| Scenario | Query | Expected Response Type |
+|----------|-------|----------------------|
+| Order tracking | "Where is my order 12345?" | database_response |
+| Standalone order | "12345" | database_response |
+| Return with order | "Return order 12347" | database_response |
+| Return without order | "I want to return an item" | clarification → database_response |
+| Cancel processing order | "Cancel order 12346" | escalation_confirmed |
+| Cancel shipped order | "Cancel order 12345" | database_response (cannot cancel) |
+| Shipping info | "What are shipping options?" | knowledge_base_response |
+| Payment methods | "What payment methods?" | knowledge_base_response |
+| Address change | "Change address for 12349" | escalation |
+| General query | "Tell me about your store" | generated_response |
 
 ## 🔧 Troubleshooting
+
+### Environment Variables Not Loading
+
+**Error:** `KeyError: 'GEMINI_API_KEY'`
+
+**Solutions:**
+- Create `.env` file in root directory
+- Ensure `python-dotenv` is installed: `pip install python-dotenv`
+- Verify `.env` file format (no spaces around `=`)
 
 ### MySQL Connection Error
 
@@ -350,17 +482,19 @@ curl -X POST http://localhost:5000/api/chat \
 
 **Solutions:**
 - Check if MySQL is running: `mysql -u root -p`
-- Verify credentials in `app.py`
+- Verify credentials in `.env` file
 - Ensure database exists: `SHOW DATABASES LIKE 'ecommerce_support';`
+- Check DB_PASSWORD is set correctly in `.env`
 
 ### Gemini API Error
 
-**Error:** `Invalid API key`
+**Error:** `Invalid API key` or `API key not configured`
 
 **Solutions:**
-- Verify API key in `app.py`
+- Verify API key in `.env` file
+- Ensure key starts with `AIzaSy`
 - Get new key from [Google AI Studio](https://makersuite.google.com/app/apikey)
-- Check rate limits
+- Check rate limits and quotas
 
 ### Module Not Found
 
@@ -396,6 +530,15 @@ mkdir templates
 mv index.html templates/
 ```
 
+### Order Not Found
+
+**Error:** "I couldn't find order #XXXXX"
+
+**Verify:**
+- Order number is exactly 5 digits
+- Order exists in database: `SELECT * FROM orders WHERE order_id = 'XXXXX';`
+- Use sample orders: 12345, 12346, 12347, 12348, 12349, 12350
+
 ## 🗃️ Database Schema
 
 ### Users Table
@@ -405,7 +548,8 @@ CREATE TABLE users (
     name VARCHAR(100) NOT NULL,
     email VARCHAR(100) UNIQUE NOT NULL,
     phone VARCHAR(20),
-    created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_email (email)
 );
 ```
 
@@ -414,13 +558,15 @@ CREATE TABLE users (
 CREATE TABLE orders (
     order_id VARCHAR(10) PRIMARY KEY,
     user_id INT NOT NULL,
-    status ENUM('processing', 'shipped', 'delivered', 'cancelled'),
+    status ENUM('processing', 'shipped', 'delivered', 'cancelled') DEFAULT 'processing',
     items TEXT NOT NULL,
     total_amount DECIMAL(10, 2),
     order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     estimated_delivery VARCHAR(50),
     tracking_number VARCHAR(50),
-    FOREIGN KEY (user_id) REFERENCES users(user_id)
+    FOREIGN KEY (user_id) REFERENCES users(user_id),
+    INDEX idx_user_id (user_id),
+    INDEX idx_status (status)
 );
 ```
 
@@ -430,8 +576,125 @@ CREATE TABLE tickets (
     ticket_id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
     issue_description TEXT NOT NULL,
-    status ENUM('open', 'in_progress', 'resolved', 'closed'),
+    status ENUM('open', 'in_progress', 'resolved', 'closed') DEFAULT 'open',
     created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(user_id)
+    resolved_date TIMESTAMP NULL,
+    assigned_agent VARCHAR(100),
+    FOREIGN KEY (user_id) REFERENCES users(user_id),
+    INDEX idx_user_id (user_id),
+    INDEX idx_status (status)
 );
 ```
+
+### Conversation History Table
+```sql
+CREATE TABLE conversation_history (
+    conversation_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT,
+    user_message TEXT NOT NULL,
+    bot_response TEXT NOT NULL,
+    intent VARCHAR(50),
+    response_type VARCHAR(50),
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id),
+    INDEX idx_user_id (user_id),
+    INDEX idx_timestamp (timestamp)
+);
+```
+
+## 💡 Key Features Explained
+
+### Context-Aware Conversations
+
+The chatbot maintains conversation state to handle multi-turn interactions:
+
+```python
+# Example: Return flow
+User: "I want to return an item"
+Bot: Sets awaiting_return_order_number = True
+Bot: "Please provide your 5-digit order number"
+
+User: "12347"
+Bot: Detects context, treats as order number
+Bot: Queries database and provides return info
+```
+
+### Standalone Order Number Handling
+
+The bot intelligently handles bare order numbers based on context:
+
+```python
+User: "12345"  # No other text
+
+# Context determines action:
+- Default: Track order
+- In return flow: Process return
+- In cancel flow: Cancel order
+- In address flow: Update address
+```
+
+### Smart Intent Detection
+
+Uses pattern matching and context awareness:
+
+```python
+detect_intent(query, context):
+    - Checks for standalone order numbers
+    - Detects keywords (return, track, cancel, etc.)
+    - Considers conversation context
+    - Returns appropriate intent
+```
+
+### Order Status-Based Responses
+
+Responses adapt to order status:
+
+- **Processing**: Can cancel, can't return yet
+- **Shipped**: Can't cancel, can't change address, can return later
+- **Delivered**: Can return within 30 days
+- **Cancelled**: No actions needed
+
+## 🌟 Advanced Usage
+
+### Custom Knowledge Base
+
+Add entries to `KNOWLEDGE_BASE` in `app.py`:
+
+```python
+KNOWLEDGE_BASE = {
+    'your_key': 'Your custom information here',
+    'warranty': 'All products come with a 1-year manufacturer warranty.',
+    # Add more...
+}
+```
+
+### Custom Intents
+
+Add new intents in `detect_intent()` function:
+
+```python
+# Example: Product inquiry
+if any(word in query_lower for word in ['product', 'item', 'catalog']):
+    return 'product_inquiry'
+```
+
+### Extending Database Queries
+
+Add new query functions:
+
+```python
+def query_product(product_id):
+    """Query product from database"""
+    connection = get_db_connection()
+    # Your implementation
+```
+
+## 📝 Environment Variables Reference
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `DB_HOST` | MySQL host | `localhost` |
+| `DB_USER` | MySQL username | `root` |
+| `DB_PASSWORD` | MySQL password | `your_password` |
+| `DB_NAME` | Database name | `ecommerce_support` |
+| `GEMINI_API_KEY` | Google Gemini API key | `AIzaSy...` |
