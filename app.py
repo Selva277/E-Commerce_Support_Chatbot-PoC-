@@ -1,5 +1,3 @@
-# app.py - Enhanced Flask Backend with Gemini LLM and MySQL
-
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 import mysql.connector
@@ -11,17 +9,14 @@ from datetime import datetime
 from dotenv import load_dotenv
 import re
 
-# Load environment variables from .env file
 load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
 
-# Configure Gemini API
 genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
 model = genai.GenerativeModel('gemini-2.5-flash')
 
-# MySQL Database Configuration
 DB_CONFIG = {
     'host': os.getenv('DB_HOST', 'localhost'),
     'user': os.getenv('DB_USER', 'root'),
@@ -29,7 +24,6 @@ DB_CONFIG = {
     'database': os.getenv('DB_NAME', 'ecommerce_support')
 }
 
-# Knowledge Base for RAG (Indian Rupee version)
 KNOWLEDGE_BASE = {
     'return_policy': 'You can return items within 30 days of delivery. Items must be unused and in original packaging. Visit our Returns page or contact support with your order number.',
     'shipping_options': 'We offer Standard (5-7 days, ₹400), Express (2-3 days, ₹1,200), and Overnight shipping (₹2,000). Shipping costs may vary by location.',
@@ -42,7 +36,6 @@ KNOWLEDGE_BASE = {
 }
 
 
-# Database Helper Functions
 def get_db_connection():
     """Create database connection"""
     try:
@@ -115,7 +108,6 @@ def create_ticket(user_id, issue_description):
         print(f"Error creating ticket: {e}")
         return None
 
-# RAG Helper Functions
 def retrieve_from_knowledge_base(query):
     """Retrieve relevant information from knowledge base"""
     query_lower = query.lower()
