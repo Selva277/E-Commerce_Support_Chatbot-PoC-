@@ -1,4 +1,4 @@
-# app.py - Flask Backend with Gemini LLM and MySQL
+# app.py - Enhanced Flask Backend with Gemini LLM and MySQL
 
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
@@ -9,6 +9,7 @@ import os
 import json
 from datetime import datetime
 from dotenv import load_dotenv
+import re
 
 # Load environment variables from .env file
 load_dotenv()
@@ -18,7 +19,7 @@ CORS(app)
 
 # Configure Gemini API
 genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
-model = genai.GenerativeModel('gemini-2.5-flash')  # Use appropriate Gemini model
+model = genai.GenerativeModel('gemini-2.5-flash')
 
 # MySQL Database Configuration
 DB_CONFIG = {
@@ -28,17 +29,18 @@ DB_CONFIG = {
     'database': os.getenv('DB_NAME', 'ecommerce_support')
 }
 
-# Knowledge Base for RAG
+# Knowledge Base for RAG (Indian Rupee version)
 KNOWLEDGE_BASE = {
     'return_policy': 'You can return items within 30 days of delivery. Items must be unused and in original packaging. Visit our Returns page or contact support with your order number.',
-    'shipping_options': 'We offer Standard (5-7 days, $5), Express (2-3 days, $15), and Overnight shipping ($25). Shipping costs may vary by location.',
-    'payment_methods': 'We accept all major credit cards (Visa, Mastercard, Amex), debit cards, PayPal, Apple Pay, and Google Pay.',
+    'shipping_options': 'We offer Standard (5-7 days, ₹400), Express (2-3 days, ₹1,200), and Overnight shipping (₹2,000). Shipping costs may vary by location.',
+    'payment_methods': 'We accept all major credit cards (Visa, Mastercard, RuPay), debit cards, UPI, Net Banking, Paytm, Google Pay, and PhonePe.',
     'track_order': 'You can track your order using your order number. Provide your order number and I will check the current status.',
     'cancel_order': 'Orders can be cancelled within 24 hours of placement if they haven\'t shipped yet. After shipping, you\'ll need to initiate a return.',
-    'customer_support': 'Our customer support team is available 24/7. Email: support@ecommerce.com | Phone: 1-800-SUPPORT',
+    'customer_support': 'Our customer support team is available 24/7. Email: support@ecommerce.com | Phone: 1800-000-0000',
     'warranty': 'All products come with a 1-year manufacturer warranty. Extended warranties are available at checkout.',
     'refund_process': 'Refunds are processed within 5-7 business days after we receive your returned item. You\'ll receive an email confirmation.'
 }
+
 
 # Database Helper Functions
 def get_db_connection():
@@ -120,54 +122,85 @@ def retrieve_from_knowledge_base(query):
     relevant_info = []
     
     for key, value in KNOWLEDGE_BASE.items():
-        # Check if any keyword matches
         keywords = key.split('_')
         if any(keyword in query_lower for keyword in keywords):
             relevant_info.append(value)
     
     return relevant_info
 
-def detect_intent(query):
-    """Detect user intent from query"""
-    query_lower = query.lower()
+def extract_order_number(query):
+    """Extract order number from query - looks for 5-digit numbers"""
+    # First check if the entire message is just a number (standalone order number)
+    query_stripped = query.strip()
+    if query_stripped.isdigit() and len(query_stripped) == 5:
+        return query_stripped
     
-    # Order tracking
-    if any(word in query_lower for word in ['order', 'track', 'status', 'where is', 'delivery']):
-        return 'track_order'
+    # Otherwise look for 5-digit numbers in the text
+    match = re.search(r'\b\d{5}\b', query)
+    return match.group(0) if match else None
+
+def is_standalone_order_number(query):
+    """Check if message is just an order number"""
+    query_stripped = query.strip()
+    return query_stripped.isdigit() and len(query_stripped) == 5
+
+def detect_intent(query, context):
+    """Detect user intent from query with context awareness"""
+    query_lower = query.lower().strip()
     
-    # Returns
+    # Check if it's a standalone order number
+    if is_standalone_order_number(query):
+        # Context determines what to do with the order number
+        if context.get('awaiting_return_order_number'):
+            return 'return_item_with_order'
+        elif context.get('awaiting_order_for_cancel'):
+            return 'cancel_order_with_number'
+        elif context.get('awaiting_order_for_address'):
+            return 'change_address_with_number'
+        else:
+            # Default: treat as tracking request
+            return 'track_order'
+    
+    # Has order number in query
+    has_order_number = extract_order_number(query) is not None
+    
+    # Return/Refund intent
     if any(word in query_lower for word in ['return', 'refund', 'send back']):
+        if has_order_number:
+            return 'return_item_with_order'
         return 'return_item'
     
+    # Order tracking
+    if any(word in query_lower for word in ['track', 'status', 'where is', 'where\'s', 'delivery', 'order']):
+        if 'return' not in query_lower and 'refund' not in query_lower and 'cancel' not in query_lower:
+            return 'track_order'
+    
     # Shipping
-    if any(word in query_lower for word in ['shipping', 'ship', 'delivery options']):
-        return 'shipping_info'
+    if any(word in query_lower for word in ['shipping', 'ship', 'delivery options', 'how long']):
+        if 'track' not in query_lower and 'where' not in query_lower and not has_order_number:
+            return 'shipping_info'
     
     # Payment
-    if any(word in query_lower for word in ['payment', 'pay', 'card', 'paypal']):
+    if any(word in query_lower for word in ['payment', 'pay', 'card', 'upi', 'paytm']):
         return 'payment_info'
     
     # Cancel
-    if any(word in query_lower for word in ['cancel', 'stop']):
+    if any(word in query_lower for word in ['cancel', 'stop order']):
         return 'cancel_order'
     
     # Address change
-    if 'address' in query_lower and 'change' in query_lower:
+    if 'address' in query_lower and ('change' in query_lower or 'update' in query_lower or 'modify' in query_lower):
         return 'change_address'
     
+    # Contact/Support
+    if any(word in query_lower for word in ['contact', 'support', 'help', 'speak to', 'talk to', 'agent']):
+        return 'contact_support'
+    
     return 'general'
-
-def extract_order_number(query):
-    """Extract order number from query"""
-    import re
-    # Look for 5-digit numbers
-    match = re.search(r'\b\d{5}\b', query)
-    return match.group(0) if match else None
 
 def generate_gemini_response(query, context, db_info=None, kb_info=None):
     """Generate response using Gemini LLM"""
     
-    # Build prompt with context
     prompt = f"""You are a helpful e-commerce customer support assistant. 
     
 User Query: {query}
@@ -190,7 +223,30 @@ If you need more information from the user, ask clearly. Keep responses under 3 
         return response.text
     except Exception as e:
         print(f"Error generating Gemini response: {e}")
-        return "I apologize, but I'm having trouble processing your request. Please try again or contact our support team."
+        return "I apologize, but I'm having trouble processing your request. Please try again or contact our support team at support@ecommerce.com"
+
+def format_order_status_message(order):
+    """Format order status message based on order data"""
+    status = order['status']
+    order_id = order['order_id']
+    items = order.get('items', 'your order')
+    
+    if status == 'shipped':
+        delivery = order.get('estimated_delivery', '3 days')
+        tracking = order.get('tracking_number', '')
+        msg = f"Your order #{order_id} ({items}) is on its way and should arrive within {delivery}."
+        if tracking:
+            msg += f" Tracking number: {tracking}"
+        return msg
+    elif status == 'processing':
+        delivery = order.get('estimated_delivery', '5-7 days')
+        return f"Your order #{order_id} ({items}) is currently being processed and will ship soon. Expected delivery: {delivery}."
+    elif status == 'delivered':
+        return f"Your order #{order_id} ({items}) has been delivered. If you have any issues, please let me know!"
+    elif status == 'cancelled':
+        return f"Order #{order_id} ({items}) has been cancelled. If you need assistance, please contact our support team."
+    else:
+        return f"Your order #{order_id} status: {status}."
 
 # API Routes
 @app.route('/')
@@ -200,90 +256,338 @@ def index():
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
-    """Main chat endpoint"""
+    """Main chat endpoint with enhanced conversational behavior"""
     data = request.json
-    user_message = data.get('message', '')
+    user_message = data.get('message', '').strip()
     conversation_context = data.get('context', {})
     
     if not user_message:
         return jsonify({'error': 'No message provided'}), 400
-    
-    # Detect intent
-    intent = detect_intent(user_message)
     
     # Initialize response data
     response_data = {
         'message': '',
         'type': 'general',
         'needs_escalation': False,
-        'context': conversation_context
+        'context': conversation_context.copy()
     }
     
-    # RAG Pipeline: Step 1 - Database Retrieval
-    if intent == 'track_order':
-        order_num = extract_order_number(user_message)
-        
+    # Extract order number once for reuse
+    order_num = extract_order_number(user_message)
+    
+    # ========== CONTEXT-AWARE STATE HANDLING ==========
+    
+    # State: Awaiting order number for tracking
+    if conversation_context.get('awaiting_order_number'):
         if order_num:
             order = query_order(order_num)
             if order:
-                # Generate response using Gemini with database info
-                gemini_response = generate_gemini_response(
-                    user_message, 
-                    conversation_context, 
-                    db_info=order
-                )
-                response_data['message'] = gemini_response
+                response_data['message'] = format_order_status_message(order)
+                response_data['type'] = 'database_response'
+                response_data['order_info'] = order
+                response_data['context'].pop('awaiting_order_number', None)
+            else:
+                response_data['message'] = f"I couldn't find order #{order_num} in our system. Please double-check the order number. Valid orders in our system are: 12345, 12346, 12347, 12348, 12349, 12350."
+                response_data['type'] = 'error'
+                response_data['context'].pop('awaiting_order_number', None)
+        else:
+            response_data['message'] = "I need a valid 5-digit order number to track your order. Could you please provide it?"
+            response_data['type'] = 'clarification'
+        
+        return jsonify(response_data)
+    
+    # State: Awaiting order number for return
+    if conversation_context.get('awaiting_return_order_number'):
+        if order_num:
+            order = query_order(order_num)
+            if order:
+                if order['status'] == 'delivered':
+                    response_data['message'] = f"I found your order #{order_num} ({order['items']}). You can return it within 30 days. Visit our Returns page: https://ecommerce.com/returns. Need help with the process?"
+                    response_data['type'] = 'database_response'
+                    response_data['order_info'] = order
+                elif order['status'] == 'shipped':
+                    response_data['message'] = f"Your order #{order_num} ({order['items']}) is currently in transit. Once delivered, you can return it within 30 days. Visit: https://ecommerce.com/returns"
+                    response_data['type'] = 'database_response'
+                elif order['status'] == 'cancelled':
+                    response_data['message'] = f"Order #{order_num} has already been cancelled. No return is needed."
+                    response_data['type'] = 'database_response'
+                else:
+                    response_data['message'] = f"Order #{order_num} ({order['items']}) is still being processed. You can cancel it instead of returning. Would you like to cancel?"
+                    response_data['type'] = 'database_response'
+                    response_data['context']['awaiting_cancel_confirmation'] = True
+                    response_data['context']['pending_order_number'] = order_num
+                
+                response_data['context'].pop('awaiting_return_order_number', None)
+            else:
+                response_data['message'] = f"I couldn't find order #{order_num} in our system. Please verify the order number. You can find it in your order confirmation email."
+                response_data['type'] = 'error'
+                response_data['context'].pop('awaiting_return_order_number', None)
+        else:
+            response_data['message'] = "Please provide your 5-digit order number so I can help you with the return."
+            response_data['type'] = 'clarification'
+        
+        return jsonify(response_data)
+    
+    # State: Awaiting order number for cancellation
+    if conversation_context.get('awaiting_order_for_cancel'):
+        if order_num:
+            order = query_order(order_num)
+            if order:
+                if order['status'] == 'processing':
+                    user_id = order['user_id']
+                    issue_desc = f"Cancel order request: Order #{order_num} - {order['items']}"
+                    ticket_id = create_ticket(user_id, issue_desc)
+                    
+                    if ticket_id:
+                        response_data['message'] = f"I've created a cancellation request for order #{order_num} ({order['items']}). Our team will process it within 24 hours. Your ticket number is #{ticket_id}."
+                        response_data['type'] = 'escalation_confirmed'
+                        response_data['ticket_id'] = ticket_id
+                    else:
+                        response_data['message'] = "I'm sorry, I couldn't create the cancellation request. Please contact support@ecommerce.com or call 1800-000-0000."
+                        response_data['type'] = 'error'
+                elif order['status'] == 'shipped':
+                    response_data['message'] = f"Order #{order_num} ({order['items']}) has already shipped. You'll need to refuse the delivery or initiate a return once received."
+                    response_data['type'] = 'database_response'
+                elif order['status'] == 'cancelled':
+                    response_data['message'] = f"Order #{order_num} is already cancelled."
+                    response_data['type'] = 'database_response'
+                else:
+                    response_data['message'] = f"Order #{order_num} status is '{order['status']}'. Please contact support for assistance."
+                    response_data['type'] = 'database_response'
+                
+                response_data['context'].pop('awaiting_order_for_cancel', None)
+            else:
+                response_data['message'] = f"I couldn't find order #{order_num}. Please verify the order number."
+                response_data['type'] = 'error'
+                response_data['context'].pop('awaiting_order_for_cancel', None)
+        else:
+            response_data['message'] = "Please provide your 5-digit order number to cancel."
+            response_data['type'] = 'clarification'
+        
+        return jsonify(response_data)
+    
+    # State: Awaiting order number for address change
+    if conversation_context.get('awaiting_order_for_address'):
+        if order_num:
+            order = query_order(order_num)
+            if order:
+                if order['status'] == 'processing':
+                    response_data['message'] = f"I found order #{order_num} ({order['items']}). I'll forward your address change request to our support team. Would you like me to create a ticket?"
+                    response_data['type'] = 'escalation'
+                    response_data['needs_escalation'] = True
+                    response_data['context']['awaiting_address_change_confirmation'] = True
+                    response_data['context']['pending_order_number'] = order_num
+                    response_data['context'].pop('awaiting_order_for_address', None)
+                elif order['status'] == 'shipped':
+                    response_data['message'] = f"Order #{order_num} ({order['items']}) has already shipped. The address cannot be changed now. You may need to contact the carrier or wait for delivery."
+                    response_data['type'] = 'database_response'
+                    response_data['context'].pop('awaiting_order_for_address', None)
+                else:
+                    response_data['message'] = f"Order #{order_num} status is '{order['status']}'. Address changes may not be possible."
+                    response_data['type'] = 'database_response'
+                    response_data['context'].pop('awaiting_order_for_address', None)
+            else:
+                response_data['message'] = f"I couldn't find order #{order_num}. Please verify the order number."
+                response_data['type'] = 'error'
+                response_data['context'].pop('awaiting_order_for_address', None)
+        else:
+            response_data['message'] = "Please provide your 5-digit order number to update the address."
+            response_data['type'] = 'clarification'
+        
+        return jsonify(response_data)
+    
+    # State: Awaiting address change confirmation
+    if conversation_context.get('awaiting_address_change_confirmation'):
+        order_num = conversation_context.get('pending_order_number')
+        user_response_lower = user_message.lower()
+        
+        if any(word in user_response_lower for word in ['yes', 'sure', 'please', 'ok', 'yeah', 'yep', 'confirm']):
+            order = query_order(order_num) if order_num else None
+            user_id = order['user_id'] if order else 1
+            issue_desc = f"Address change request for order #{order_num}"
+            
+            ticket_id = create_ticket(user_id, issue_desc)
+            if ticket_id:
+                response_data['message'] = f"I've created ticket #{ticket_id} for your address change request. Our support team will contact you shortly to update the delivery address."
+                response_data['type'] = 'escalation_confirmed'
+                response_data['ticket_id'] = ticket_id
+            else:
+                response_data['message'] = "I'm sorry, I couldn't create the ticket. Please contact support@ecommerce.com directly."
+                response_data['type'] = 'error'
+        else:
+            response_data['message'] = "No problem! Is there anything else I can help you with?"
+            response_data['type'] = 'general'
+        
+        response_data['context'].pop('awaiting_address_change_confirmation', None)
+        response_data['context'].pop('pending_order_number', None)
+        return jsonify(response_data)
+    
+    # State: Awaiting cancel confirmation
+    if conversation_context.get('awaiting_cancel_confirmation'):
+        order_num = conversation_context.get('pending_order_number')
+        user_response_lower = user_message.lower()
+        
+        if any(word in user_response_lower for word in ['yes', 'sure', 'please', 'ok', 'yeah', 'yep', 'cancel']):
+            order = query_order(order_num) if order_num else None
+            if order:
+                user_id = order['user_id']
+                issue_desc = f"Cancel order request: Order #{order_num} - {order['items']}"
+                ticket_id = create_ticket(user_id, issue_desc)
+                
+                if ticket_id:
+                    response_data['message'] = f"I've created a cancellation request for order #{order_num}. Our team will process it within 24 hours. Ticket #{ticket_id}."
+                    response_data['type'] = 'escalation_confirmed'
+                    response_data['ticket_id'] = ticket_id
+                else:
+                    response_data['message'] = "I'm sorry, I couldn't create the request. Please contact support@ecommerce.com"
+                    response_data['type'] = 'error'
+        else:
+            response_data['message'] = "Okay, I won't cancel the order. Let me know if you need anything else!"
+            response_data['type'] = 'general'
+        
+        response_data['context'].pop('awaiting_cancel_confirmation', None)
+        response_data['context'].pop('pending_order_number', None)
+        return jsonify(response_data)
+    
+    # ========== NEW QUERY - INTENT DETECTION ==========
+    intent = detect_intent(user_message, conversation_context)
+    
+    # Handle: Track Order
+    if intent == 'track_order':
+        if order_num:
+            order = query_order(order_num)
+            if order:
+                response_data['message'] = format_order_status_message(order)
                 response_data['type'] = 'database_response'
                 response_data['order_info'] = order
             else:
-                response_data['message'] = f"I couldn't find order #{order_num} in our system. Please verify the order number or contact support."
+                response_data['message'] = f"I couldn't find order #{order_num} in our system. Please double-check the order number or contact support at support@ecommerce.com"
                 response_data['type'] = 'error'
-                response_data['needs_escalation'] = True
         else:
-            # Ask for order number
-            if conversation_context.get('awaiting_order_number'):
-                response_data['message'] = "I need a valid 5-digit order number. Could you please provide it?"
-                response_data['type'] = 'clarification'
-            else:
-                response_data['message'] = "I can help you track your order! Could you please provide your order number?"
-                response_data['type'] = 'clarification'
-                response_data['context']['awaiting_order_number'] = True
+            response_data['message'] = "I can help track your order! Please provide your 5-digit order number."
+            response_data['type'] = 'clarification'
+            response_data['context']['awaiting_order_number'] = True
     
-    # RAG Pipeline: Step 2 - Knowledge Base Retrieval
-    elif intent in ['return_item', 'shipping_info', 'payment_info', 'cancel_order']:
+    # Handle: Return with Order Number
+    elif intent == 'return_item_with_order':
+        if order_num:
+            order = query_order(order_num)
+            if order:
+                if order['status'] == 'delivered':
+                    response_data['message'] = f"I found your order #{order_num} ({order['items']}). You can return it within 30 days. Visit our Returns page: https://ecommerce.com/returns. Need help?"
+                    response_data['type'] = 'database_response'
+                    response_data['order_info'] = order
+                elif order['status'] == 'shipped':
+                    response_data['message'] = f"Your order #{order_num} ({order['items']}) is in transit. Once delivered, you can return it within 30 days. Visit: https://ecommerce.com/returns"
+                    response_data['type'] = 'database_response'
+                elif order['status'] == 'cancelled':
+                    response_data['message'] = f"Order #{order_num} has already been cancelled. No return needed."
+                    response_data['type'] = 'database_response'
+                else:
+                    response_data['message'] = f"Order #{order_num} ({order['items']}) is still processing. You can cancel it instead. Would you like to cancel?"
+                    response_data['type'] = 'database_response'
+                    response_data['context']['awaiting_cancel_confirmation'] = True
+                    response_data['context']['pending_order_number'] = order_num
+            else:
+                response_data['message'] = f"I couldn't find order #{order_num}. Please verify the order number."
+                response_data['type'] = 'error'
+        else:
+            response_data['message'] = "I can help you with a return! Please provide your order number."
+            response_data['type'] = 'clarification'
+            response_data['context']['awaiting_return_order_number'] = True
+    
+    # Handle: Return without Order Number
+    elif intent == 'return_item':
+        response_data['message'] = "I can help with your return! Please provide your 5-digit order number."
+        response_data['type'] = 'clarification'
+        response_data['context']['awaiting_return_order_number'] = True
+    
+    # Handle: Change Address
+    elif intent == 'change_address' or intent == 'change_address_with_number':
+        if order_num:
+            order = query_order(order_num)
+            if order:
+                if order['status'] == 'processing':
+                    response_data['message'] = f"I found order #{order_num} ({order['items']}). I'll forward your address change request to our support team. Would you like me to create a ticket?"
+                    response_data['type'] = 'escalation'
+                    response_data['needs_escalation'] = True
+                    response_data['context']['awaiting_address_change_confirmation'] = True
+                    response_data['context']['pending_order_number'] = order_num
+                elif order['status'] == 'shipped':
+                    response_data['message'] = f"Order #{order_num} ({order['items']}) has already shipped. The address cannot be changed. Contact the carrier or wait for delivery."
+                    response_data['type'] = 'database_response'
+                else:
+                    response_data['message'] = f"Order #{order_num} status is '{order['status']}'. Address changes may not be possible."
+                    response_data['type'] = 'database_response'
+            else:
+                response_data['message'] = f"I couldn't find order #{order_num}. Please verify the order number."
+                response_data['type'] = 'error'
+        else:
+            response_data['message'] = "I can help update the delivery address! Please provide your order number."
+            response_data['type'] = 'clarification'
+            response_data['context']['awaiting_order_for_address'] = True
+    
+    # Handle: Shipping Info
+    elif intent == 'shipping_info':
+        kb_info = retrieve_from_knowledge_base('shipping')
+        response_data['message'] = kb_info[0] if kb_info else KNOWLEDGE_BASE['shipping_options']
+        response_data['type'] = 'knowledge_base_response'
+    
+    # Handle: Payment Info
+    elif intent == 'payment_info':
+        kb_info = retrieve_from_knowledge_base('payment')
+        response_data['message'] = kb_info[0] if kb_info else KNOWLEDGE_BASE['payment_methods']
+        response_data['type'] = 'knowledge_base_response'
+    
+    # Handle: Cancel Order
+    elif intent == 'cancel_order' or intent == 'cancel_order_with_number':
+        if order_num:
+            order = query_order(order_num)
+            if order:
+                if order['status'] == 'processing':
+                    user_id = order['user_id']
+                    issue_desc = f"Cancel order request: Order #{order_num} - {order['items']}"
+                    ticket_id = create_ticket(user_id, issue_desc)
+                    
+                    if ticket_id:
+                        response_data['message'] = f"I've created a cancellation request for order #{order_num} ({order['items']}). Our team will process it within 24 hours. Ticket #{ticket_id}."
+                        response_data['type'] = 'escalation_confirmed'
+                        response_data['ticket_id'] = ticket_id
+                    else:
+                        response_data['message'] = "I'm sorry, I couldn't create the request. Please contact support@ecommerce.com"
+                        response_data['type'] = 'error'
+                elif order['status'] == 'shipped':
+                    response_data['message'] = f"Order #{order_num} ({order['items']}) has already shipped. You'll need to refuse delivery or return it after receiving."
+                    response_data['type'] = 'database_response'
+                elif order['status'] == 'cancelled':
+                    response_data['message'] = f"Order #{order_num} is already cancelled."
+                    response_data['type'] = 'database_response'
+                else:
+                    response_data['message'] = f"Order #{order_num} status is '{order['status']}'. Please contact support for assistance."
+                    response_data['type'] = 'database_response'
+            else:
+                response_data['message'] = f"I couldn't find order #{order_num}. Please verify the order number."
+                response_data['type'] = 'error'
+        else:
+            response_data['message'] = "I can help cancel your order. Please provide your order number."
+            response_data['type'] = 'clarification'
+            response_data['context']['awaiting_order_for_cancel'] = True
+    
+    # Handle: Contact Support
+    elif intent == 'contact_support':
+        response_data['message'] = KNOWLEDGE_BASE['customer_support']
+        response_data['type'] = 'knowledge_base_response'
+    
+    # Handle: General
+    else:
         kb_info = retrieve_from_knowledge_base(user_message)
         if kb_info:
-            # Generate response using Gemini with knowledge base info
-            gemini_response = generate_gemini_response(
-                user_message, 
-                conversation_context, 
-                kb_info=kb_info
-            )
-            response_data['message'] = gemini_response
+            response_data['message'] = ' '.join(kb_info)
             response_data['type'] = 'knowledge_base_response'
         else:
-            # Fallback to pure Gemini generation
             gemini_response = generate_gemini_response(user_message, conversation_context)
             response_data['message'] = gemini_response
             response_data['type'] = 'generated_response'
-    
-    # RAG Pipeline: Step 3 - Escalation needed
-    elif intent == 'change_address':
-        response_data['message'] = "I understand you want to change your shipping address. I cannot modify addresses directly, but I can create a support ticket for our team to help you immediately. Would you like me to do that?"
-        response_data['type'] = 'escalation'
-        response_data['needs_escalation'] = True
-    
-    # RAG Pipeline: Step 4 - General/Fallback
-    else:
-        # Try knowledge base first
-        kb_info = retrieve_from_knowledge_base(user_message)
-        gemini_response = generate_gemini_response(
-            user_message, 
-            conversation_context, 
-            kb_info=kb_info if kb_info else None
-        )
-        response_data['message'] = gemini_response
-        response_data['type'] = 'generated_response' if kb_info else 'fallback'
     
     return jsonify(response_data)
 
@@ -291,7 +595,7 @@ def chat():
 def create_support_ticket():
     """Create a support ticket"""
     data = request.json
-    user_id = data.get('user_id', 1)  # Default user for demo
+    user_id = data.get('user_id', 1)
     issue = data.get('issue', '')
     
     ticket_id = create_ticket(user_id, issue)
